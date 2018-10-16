@@ -1,0 +1,151 @@
+---
+title: "Course Project"
+author: "Fergus Meade"
+date: "10/14/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data
+Human Ativity Recognition (HAR) Weight Lifting Exercises dataset. Information at http://groupware.les.inf.puc-rio.br/har. 
+
+```{r data, cache=TRUE, message=FALSE, warning=FALSE}
+training_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testing_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(training_url, destfile = "training.csv")
+download.file(testing_url, destfile = "testing.csv")
+training <- read.csv(file = "training.csv", 
+                     na.strings = c("NA","",'#DIV/0!'))
+testing <- read.csv(file = "testing.csv",
+                    na.strings = c("NA","",'#DIV/0!'))
+```
+
+Six young healthy participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions
+
+* Exactly according to the specification (class A)
+* Throwing elbows to the front (class B)
+* Lifting the dumbbell only halfway (class C)
+* Lowering the dumbbell only halfway (class D)
+* Throwing the hips to the front (class E)
+
+Class A corresponds to the specified execution of the exercise, while the other four classes correspond to common mistakes. 
+
+## Goal
+The goal is to predict the manner in which they did the exercise i.e. the "classe" variable in the training set.
+
+```{r}
+summary(training$classe)
+```
+
+There are five possible "classe"-A to E. 
+
+## Data preparation
+First we will assess which columns of the testing data set are composed solely of NA values. These columns will then be removed from both the training and testing data sets.
+
+Additionally, columns deemed unsuitable for model development will be removed. 
+
+```{r, message=FALSE, warning=FALSE}
+count_NA <- sapply(testing, function(x) sum((is.na(x))))
+NA_values <- count_NA[count_NA == 20]
+var_remove <- names(NA_values)
+training <- training[,!(names(training) %in% var_remove)]
+testing <- testing[,!(names(testing) %in% var_remove)]
+#60 variables remaining but some inappropriate-names, time stamps etc
+add_var_remove <- names(testing[, 1:7])
+testing <- testing[,!(names(testing) %in% add_var_remove)] 
+training <- training[,!(names(training) %in% add_var_remove)]
+names(testing) #now 53 variables
+```
+
+## Model Development
+We now split the training data. `train1` will be used to train the models while `train2` will be used to validate them.
+
+```{r message=TRUE, warning=TRUE, cache=TRUE}
+set.seed(12345)
+library(caret)
+inTrain <- createDataPartition(y=training$classe,
+                               p = 0.7,
+                               list = FALSE)
+train1 <- training[inTrain,]
+train2 <- training[-inTrain,]
+dim(train1); dim(train2)
+trControl <- trainControl(method="cv", number=5)
+```
+
+### Train with classification tree
+```{r ct, cache=TRUE}
+model_CT <- train(classe ~ .,
+                  data=train1,
+                  method="rpart",
+                  trControl=trControl)
+rattle::fancyRpartPlot(model_CT$finalModel)
+trainvalct <- predict(model_CT, newdata=train2)
+confMatCT <- confusionMatrix(train2$classe,trainvalct)
+# display confusion matrix and model accuracy
+confMatCT$table
+#Accuracy
+confMatCT$overall[1]
+```
+
+The accuracy of this model is poor at just under 50%. This means the outcome class will not be predicted sufficiently well by the other variables.
+
+### Train with random forests
+```{r rf, cache=TRUE}
+model_RF <- train(classe ~ .,
+                  data = train1,
+                  method="rf",
+                  trControl=trControl,
+                  verbose=FALSE)
+model_RF
+plot(model_RF,
+     main = "Accuracy of Random forest model by number of predictors")
+trainvalrf <- predict(model_RF, newdata=train2)
+confMatRF <- confusionMatrix(train2$classe, trainvalrf)
+# display confusion matrix 
+confMatRF$table
+#Accuracy
+confMatRF$overall[1]
+names(model_RF$finalModel)
+model_RF$finalModel$classes
+plot(model_RF$finalModel,
+     main="Model error of Random forest model by number of trees")
+# Compute the variable importance 
+MostImpVars <- varImp(model_RF)
+MostImpVars
+```
+
+With random forest, we reach an accuracy of 98.9% using cross-validation with 5 steps. Use of more than aprox 30 trees does not reduce the error significantly. 
+
+### Train with boosting
+Finally let's try gradient boosting with trees with the `gbm` package.
+
+```{r gbm, cache=TRUE, message=FALSE, warning=FALSE}
+model_GBM <- train(classe ~ .,
+                  data = train1,
+                  method="gbm",
+                  trControl=trControl,
+                  verbose=FALSE)
+model_GBM
+plot(model_GBM)
+trainvalgbm <- predict(model_GBM,newdata=train2)
+confMatGBM <- confusionMatrix(train2$classe,trainvalgbm)
+# display confusion matrix 
+confMatGBM$table
+# Accuracy
+confMatGBM$overall[1]
+```
+
+With gradient boosting an accuracy of 95.7% was achieved. 
+
+## Conclusion
+Therefore the most accurate model was the one created using random forests. 
+
+Lets use it to predict on the `testing` data set
+
+```{r conclusion, warning=FALSE, message=FALSE, cache=TRUE}
+predict(model_RF, newdata=testing)
+```
+
